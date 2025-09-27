@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Space Explorer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #000;
+            color: #fff;
+            overflow: hidden;
+            cursor: crosshair;
+        }
+
+        #canvas {
+            display: block;
+            width: 100%;
+            height: 100vh;
+        }
+
+        .hud {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            background: rgba(0, 20, 40, 0.8);
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #00ffff;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
+            backdrop-filter: blur(5px);
+        }
+
+        .hud h2 {
+            color: #00ffff;
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+
+        .hud p {
+            margin: 5px 0;
+            font-size: 14px;
+        }
+
+        .controls {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            z-index: 100;
+            background: rgba(0, 20, 40, 0.8);
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #00ffff;
+            backdrop-filter: blur(5px);
+        }
+
+        .controls h3 {
+            color: #00ffff;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+
+        .controls p {
+            margin: 3px 0;
+            font-size: 12px;
+        }
+
+        .info-panel {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 100;
+            background: rgba(20, 0, 40, 0.9);
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px solid #ff00ff;
+            box-shadow: 0 0 20px rgba(255, 0, 255, 0.3);
+            backdrop-filter: blur(5px);
+            max-width: 300px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .info-panel.visible {
+            opacity: 1;
+        }
+
+        .info-panel h3 {
+            color: #ff00ff;
+            margin-bottom: 10px;
+        }
+
+        .minimap {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 100;
+            width: 200px;
+            height: 200px;
+            background: rgba(0, 0, 20, 0.8);
+            border: 1px solid #00ffff;
+            border-radius: 10px;
+            backdrop-filter: blur(5px);
+        }
+
+        .loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 1000;
+            color: #00ffff;
+            font-size: 24px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <div class="loading" id="loading">Initializing Space Explorer...</div>
+    
+    <canvas id="canvas"></canvas>
+    
+    <div class="hud">
+        <h2>Space Explorer</h2>
+        <p>Position: <span id="position">0, 0, 0</span></p>
+        <p>Speed: <span id="speed">0</span></p>
+        <p>Objects Found: <span id="objectCount">0</span></p>
+        <p>Current Target: <span id="currentTarget">None</span></p>
+    </div>
+
+    <div class="controls">
+        <h3>Navigation</h3>
+        <p>Mouse: Look around</p>
+        <p>WASD: Move</p>
+        <p>Space: Boost up</p>
+        <p>Shift: Boost down</p>
+        <p>Click: Select object</p>
+        <p>R: Random jump</p>
+    </div>
+
+    <div class="info-panel" id="infoPanel">
+        <h3 id="objectName">Object Name</h3>
+        <p><strong>Type:</strong> <span id="objectType">-</span></p>
+        <p><strong>Size:</strong> <span id="objectSize">-</span></p>
+        <p><strong>Distance:</strong> <span id="objectDistance">-</span></p>
+        <p><strong>Temperature:</strong> <span id="objectTemp">-</span></p>
+        <p id="objectDescription">Click on a celestial object to learn more about it.</p>
+    </div>
+
+    <canvas class="minimap" id="minimap" width="200" height="200"></canvas>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        class SpaceExplorer {
+            constructor() {
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 10000);
+                this.renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('canvas'), antialias: true });
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.setClearColor(0x000011);
+
+                this.controls = {
+                    forward: false,
+                    backward: false,
+                    left: false,
+                    right: false,
+                    up: false,
+                    down: false
+                };
+
+                this.mouse = { x: 0, y: 0 };
+                this.velocity = new THREE.Vector3();
+                this.celestialBodies = [];
+                this.selectedObject = null;
+                this.objectCount = 0;
+
+                this.initScene();
+                this.initControls();
+                this.initMinimap();
+                this.animate();
+                
+                setTimeout(() => {
+                    document.getElementById('loading').style.display = 'none';
+                }, 2000);
+            }
+
+            initScene() {
+                // Create starfield
+                this.createStarfield();
+                
+                // Create celestial bodies
+                this.createCelestialBodies();
+                
+                // Position camera
+                this.camera.position.set(0, 0, 100);
+            }
+
+            createStarfield() {
+                const starGeometry = new THREE.BufferGeometry();
+                const starCount = 10000;
+                const starPositions = new Float32Array(starCount * 3);
+
+                for (let i = 0; i < starCount; i++) {
+                    starPositions[i * 3] = (Math.random() - 0.5) * 4000;
+                    starPositions[i * 3 + 1] = (Math.random() - 0.5) * 4000;
+                    starPositions[i * 3 + 2] = (Math.random() - 0.5) * 4000;
+                }
+
+                starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+                const starMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 1 });
+                const stars = new THREE.Points(starGeometry, starMaterial);
+                this.scene.add(stars);
+            }
+
+            createCelestialBodies() {
+                const bodyTypes = [
+                    { name: 'Red Giant', color: 0xff4444, size: 15, temp: '3000K', type: 'Star' },
+                    { name: 'Blue Dwarf', color: 0x4444ff, size: 8, temp: '10000K', type: 'Star' },
+                    { name: 'Yellow Star', color: 0xffff44, size: 10, temp: '5800K', type: 'Star' },
+                    { name: 'Gas Giant', color: 0x44aa44, size: 12, temp: '165K', type: 'Planet' },
+                    { name: 'Rocky Planet', color: 0xaa6644, size: 6, temp: '288K', type: 'Planet' },
+                    { name: 'Ice Planet', color: 0x44aaff, size: 7, temp: '150K', type: 'Planet' },
+                    { name: 'Desert World', color: 0xffaa44, size: 5, temp: '350K', type: 'Planet' },
+                    { name: 'Ocean World', color: 0x0066aa, size: 8, temp: '280K', type: 'Planet' }
+                ];
+
+                for (let i = 0; i < 50; i++) {
+                    const bodyType = bodyTypes[Math.floor(Math.random() * bodyTypes.length)];
+                    const geometry = new THREE.SphereGeometry(bodyType.size, 32, 32);
+                    
+                    let material;
+                    if (bodyType.type === 'Star') {
+                        material = new THREE.MeshBasicMaterial({ 
+                            color: bodyType.color,
+                            transparent: true,
+                            opacity: 0.9
+                        });
+                        
+                        // Add glow effect for stars
+                        const glowGeometry = new THREE.SphereGeometry(bodyType.size * 1.5, 16, 16);
+                        const glowMaterial = new THREE.MeshBasicMaterial({
+                            color: bodyType.color,
+                            transparent: true,
+                            opacity: 0.2
+                        });
+                        const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+                        this.scene.add(glow);
+                        
+                        glow.position.set(
+                            (Math.random() - 0.5) * 2000,
+                            (Math.random() - 0.5) * 2000,
+                            (Math.random() - 0.5) * 2000
+                        );
+                    } else {
+                        material = new THREE.MeshLambertMaterial({ color: bodyType.color });
+                    }
+
+                    const celestialBody = new THREE.Mesh(geometry, material);
+                    
+                    celestialBody.position.set(
+                        (Math.random() - 0.5) * 2000,
+                        (Math.random() - 0.5) * 2000,
+                        (Math.random() - 0.5) * 2000
+                    );
+
+                    // Add rotation
+                    celestialBody.rotationSpeed = Math.random() * 0.02;
+
+                    // Store metadata
+                    celestialBody.userData = {
+                        name: `${bodyType.name} ${i + 1}`,
+                        type: bodyType.type,
+                        temperature: bodyType.temp,
+                        size: bodyType.size,
+                        description: this.generateDescription(bodyType)
+                    };
+
+                    this.celestialBodies.push(celestialBody);
+                    this.scene.add(celestialBody);
+                    this.objectCount++;
+                }
+
+                // Add some ambient light for planets
+                const ambientLight = new THREE.AmbientLight(0x404040, 0.3);
+                this.scene.add(ambientLight);
+
+                // Add directional light
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+                directionalLight.position.set(100, 100, 100);
+                this.scene.add(directionalLight);
+            }
+
+            generateDescription(bodyType) {
+                const descriptions = {
+                    'Red Giant': 'A massive, cool star in its later evolutionary stage. Its outer layers have expanded dramatically.',
+                    'Blue Dwarf': 'A hot, young star burning hydrogen at an incredible rate. Extremely luminous and energetic.',
+                    'Yellow Star': 'A main-sequence star similar to our Sun. Perfect for supporting life in its habitable zone.',
+                    'Gas Giant': 'A massive planet composed primarily of hydrogen and helium. May have dozens of moons.',
+                    'Rocky Planet': 'A terrestrial world with a solid surface. Could potentially harbor liquid water.',
+                    'Ice Planet': 'A frozen world covered in ice and snow. May have subsurface oceans beneath the ice.',
+                    'Desert World': 'A dry, arid planet with extreme temperatures. Dust storms may rage across its surface.',
+                    'Ocean World': 'A planet covered entirely by vast oceans. Perfect conditions for marine life.'
+                };
+                return descriptions[bodyType.name] || 'A mysterious celestial object waiting to be explored.';
+            }
+
+            initControls() {
+                document.addEventListener('keydown', (event) => {
+                    switch(event.code) {
+                        case 'KeyW': this.controls.forward = true; break;
+                        case 'KeyS': this.controls.backward = true; break;
+                        case 'KeyA': this.controls.left = true; break;
+                        case 'KeyD': this.controls.right = true; break;
+                        case 'Space': this.controls.up = true; event.preventDefault(); break;
+                        case 'ShiftLeft': this.controls.down = true; break;
+                        case 'KeyR': this.randomJump(); break;
+                    }
+                });
+
+                document.addEventListener('keyup', (event) => {
+                    switch(event.code) {
+                        case 'KeyW': this.controls.forward = false; break;
+                        case 'KeyS': this.controls.backward = false; break;
+                        case 'KeyA': this.controls.left = false; break;
+                        case 'KeyD': this.controls.right = false; break;
+                        case 'Space': this.controls.up = false; break;
+                        case 'ShiftLeft': this.controls.down = false; break;
+                    }
+                });
+
+                document.addEventListener('mousemove', (event) => {
+                    this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                    this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                    
+                    // Camera rotation based on mouse
+                    this.camera.rotation.y += (this.mouse.x - this.camera.rotation.y) * 0.05;
+                    this.camera.rotation.x += (this.mouse.y - this.camera.rotation.x) * 0.05;
+                });
+
+                document.addEventListener('click', (event) => {
+                    this.selectObject(event);
+                });
+
+                window.addEventListener('resize', () => {
+                    this.camera.aspect = window.innerWidth / window.innerHeight;
+                    this.camera.updateProjectionMatrix();
+                    this.renderer.setSize(window.innerWidth, window.innerHeight);
+                });
+            }
+
+            selectObject(event) {
+                const raycaster = new THREE.Raycaster();
+                const mouse = new THREE.Vector2(
+                    (event.clientX / window.innerWidth) * 2 - 1,
+                    -(event.clientY / window.innerHeight) * 2 + 1
+                );
+
+                raycaster.setFromCamera(mouse, this.camera);
+                const intersects = raycaster.intersectObjects(this.celestialBodies);
+
+                if (intersects.length > 0) {
+                    this.selectedObject = intersects[0].object;
+                    this.showObjectInfo(this.selectedObject);
+                }
+            }
+
+            showObjectInfo(object) {
+                const infoPanel = document.getElementById('infoPanel');
+                const userData = object.userData;
+
+                document.getElementById('objectName').textContent = userData.name;
+                document.getElementById('objectType').textContent = userData.type;
+                document.getElementById('objectSize').textContent = `${userData.size} units`;
+                document.getElementById('objectDistance').textContent = 
+                    `${Math.round(this.camera.position.distanceTo(object.position))} units`;
+                document.getElementById('objectTemp').textContent = userData.temperature;
+                document.getElementById('objectDescription').textContent = userData.description;
+
+                infoPanel.classList.add('visible');
+                document.getElementById('currentTarget').textContent = userData.name;
+            }
+
+            randomJump() {
+                if (this.celestialBodies.length > 0) {
+                    const randomBody = this.celestialBodies[Math.floor(Math.random() * this.celestialBodies.length)];
+                    const jumpDistance = 200;
+                    
+                    this.camera.position.set(
+                        randomBody.position.x + (Math.random() - 0.5) * jumpDistance,
+                        randomBody.position.y + (Math.random() - 0.5) * jumpDistance,
+                        randomBody.position.z + jumpDistance
+                    );
+                    
+                    this.camera.lookAt(randomBody.position);
+                    this.selectedObject = randomBody;
+                    this.showObjectInfo(randomBody);
+                }
+            }
+
+            initMinimap() {
+                this.minimapCanvas = document.getElementById('minimap');
+                this.minimapCtx = this.minimapCanvas.getContext('2d');
+            }
+
+            updateMinimap() {
+                this.minimapCtx.clearRect(0, 0, 200, 200);
+                this.minimapCtx.fillStyle = '#001122';
+                this.minimapCtx.fillRect(0, 0, 200, 200);
+
+                // Draw celestial bodies on minimap
+                this.celestialBodies.forEach(body => {
+                    const x = (body.position.x / 2000) * 100 + 100;
+                    const y = (body.position.z / 2000) * 100 + 100;
+                    
+                    if (x >= 0 && x <= 200 && y >= 0 && y <= 200) {
+                        this.minimapCtx.fillStyle = body.userData.type === 'Star' ? '#ffff44' : '#44aa44';
+                        this.minimapCtx.beginPath();
+                        this.minimapCtx.arc(x, y, 2, 0, Math.PI * 2);
+                        this.minimapCtx.fill();
+                    }
+                });
+
+                // Draw player position
+                const playerX = (this.camera.position.x / 2000) * 100 + 100;
+                const playerY = (this.camera.position.z / 2000) * 100 + 100;
+                
+                this.minimapCtx.fillStyle = '#00ffff';
+                this.minimapCtx.beginPath();
+                this.minimapCtx.arc(playerX, playerY, 3, 0, Math.PI * 2);
+                this.minimapCtx.fill();
+            }
+
+            updateMovement() {
+                const speed = 2;
+                const direction = new THREE.Vector3();
+
+                if (this.controls.forward) direction.z -= speed;
+                if (this.controls.backward) direction.z += speed;
+                if (this.controls.left) direction.x -= speed;
+                if (this.controls.right) direction.x += speed;
+                if (this.controls.up) direction.y += speed;
+                if (this.controls.down) direction.y -= speed;
+
+                // Apply camera rotation to movement direction
+                direction.applyQuaternion(this.camera.quaternion);
+                this.camera.position.add(direction);
+
+                // Update velocity for speed display
+                this.velocity.copy(direction);
+            }
+
+            updateHUD() {
+                const pos = this.camera.position;
+                document.getElementById('position').textContent = 
+                    `${Math.round(pos.x)}, ${Math.round(pos.y)}, ${Math.round(pos.z)}`;
+                document.getElementById('speed').textContent = Math.round(this.velocity.length() * 10);
+                document.getElementById('objectCount').textContent = this.objectCount;
+            }
+
+            animate() {
+                requestAnimationFrame(() => this.animate());
+
+                this.updateMovement();
+                this.updateHUD();
+                this.updateMinimap();
+
+                // Rotate celestial bodies
+                this.celestialBodies.forEach(body => {
+                    body.rotation.y += body.rotationSpeed;
+                });
+
+                this.renderer.render(this.scene, this.camera);
+            }
+        }
+
+        // Initialize the space explorer
+        const explorer = new SpaceExplorer();
+    </script>
+</body>
+</html>
